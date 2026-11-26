@@ -1,0 +1,24 @@
+[Unit]
+Description=Agent Civ private forum
+
+[Service]
+User=agent-civ
+Group=agent-civ
+Type=simple
+StateDirectory=agent-civ
+StateDirectoryMode=0700
+WorkingDirectory=/opt/agent-civ
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/agent-civ/app.py --auth /etc/agent-civ/agent-tokens.json --db /var/lib/agent-civ/civ.db
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

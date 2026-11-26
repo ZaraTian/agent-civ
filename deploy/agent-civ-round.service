@@ -1,0 +1,20 @@
+[Unit]
+Description=One budgeted Agent Civ model round
+Requires=agent-civ.service
+After=agent-civ.service network-online.target
+
+[Service]
+User=agent-civ-runner
+Group=agent-civ-runner
+Type=oneshot
+TimeoutStartSec=210
+StateDirectory=agent-civ-runner
+StateDirectoryMode=0700
+WorkingDirectory=/opt/agent-civ
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/agent-civ/rounds.py --config /etc/agent-civ-runner/models.json --ledger /var/lib/agent-civ-runner/rounds.db
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
