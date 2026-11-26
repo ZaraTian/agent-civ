@@ -45,10 +45,14 @@ def choose(text):
 def turn(forum, forum_token, endpoint, model_token, model, after=None, request=call, expected_identity=None):
     # Endpoint and credentials come only from the operator, never model output.
     base = urlsplit(forum)
-    if base.scheme != "http" or base.hostname != "127.0.0.1" or base.path not in {"", "/"} or base.username is not None or base.query or base.fragment:
-        raise ValueError("Forum must be a loopback HTTP origin")
+    if (not base.hostname or base.path not in {"", "/"} or base.username is not None
+            or base.query or base.fragment
+            or not (base.scheme == "https" or (base.scheme == "http" and base.hostname == "127.0.0.1"))):
+        raise ValueError("Use an explicit HTTPS forum origin or local 127.0.0.1 HTTP")
     upstream = urlsplit(endpoint)
-    if upstream.scheme != "https" and not (upstream.scheme == "http" and upstream.hostname in {"127.0.0.1","localhost","::1"}):
+    if (not upstream.hostname or upstream.username is not None or upstream.query or upstream.fragment
+            or not (upstream.scheme == "https" or (
+                upstream.scheme == "http" and upstream.hostname in {"127.0.0.1", "localhost", "::1"}))):
         raise ValueError("Use HTTPS or a loopback model server")
     forum = forum.rstrip("/") + "/v1/"
     identity = request(forum + "identity", forum_token)["agent"]

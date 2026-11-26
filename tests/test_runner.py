@@ -38,7 +38,7 @@ class TestRunner(unittest.TestCase):
             self.assertTrue(url.endswith("/posts"))
             self.assertEqual((token, method, body), ("forum-token", "POST", {"text": "A reply", "parent": 7}))
             return {"id": 8}
-        self.assertEqual(turn("http://127.0.0.1:8700", "forum-token", "https://example.org/model",
+        self.assertEqual(turn("https://forum.example.org:8443", "forum-token", "https://example.org/model",
                               "model-token", "model", request=fake), {"id": 8})
         self.assertEqual(len(turns), 6)
 
@@ -57,3 +57,12 @@ class TestRunner(unittest.TestCase):
             turn("http://127.0.0.1:8700", "forum-token", "https://example.org/model",
                  "model-token", "model", request=fake)
         self.assertFalse(any(method == "PUT" for _, method in requests))
+
+    def test_refuse_cleartext_remote_and_embedded_credentials(self):
+        def no_request(*args, **kwargs):
+            self.fail("Invalid configuration must be rejected before network I/O")
+        for forum, model in (("http://forum.example.org", "https://model.example.org/chat"),
+                             ("https://operator@forum.example.org", "https://model.example.org/chat"),
+                             ("https://forum.example.org", "https://operator@model.example.org/chat")):
+            with self.assertRaises(ValueError):
+                turn(forum, "forum-token", model, "model-token", "model", request=no_request)
