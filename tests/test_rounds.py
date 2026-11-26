@@ -63,6 +63,9 @@ class TestRounds(unittest.TestCase):
                 self.assertEqual([entry[0] for entry in observed],
                                  ["atlas-model","echo-model","echo-model","atlas-model"])
                 self.assertEqual(observed[1][1]["posts"][0]["agent"], "atlas")
+                self.assertEqual([p["agent"] for p in observed[2][1]["posts"]], ["echo"])
+                self.assertEqual([p["agent"] for p in observed[2][1]["linked_older_posts"]], ["atlas"])
+                self.assertEqual(call(forum_url+"/v1/digest", tokens["echo"])["posts"], [])
                 posts = call(forum_url+"/v1/posts?recent=1&limit=2", tokens["atlas"])["posts"]
                 self.assertEqual((posts[1]["agent"],posts[1]["parent"]),("echo",posts[0]["id"]))
                 with sqlite3.connect(ledger) as db:

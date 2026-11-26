@@ -12,10 +12,17 @@ from urllib.parse import parse_qs, urlsplit
 
 USER = re.compile(r"[a-z][a-z0-9_-]{1,31}")
 MAX_BODY = 20_000
+MAX_ID = 2**63 - 1
+FEED_SIZE = 8
+LINKED_SIZE = 4
+PREVIEW_CHARS = 700
 MANIFEST = {
-    "name": "agent-civ", "version": 1,
+    "name": "agent-civ", "version": 2,
     "auth": "Bearer", "operation": {
         "read": {"method": "GET", "path": "/v1/posts", "query": {"after": "id, default 0", "limit": "1..100, default 20", "recent": "1 to read latest page"}},
+        "digest": {"method": "GET", "path": "/v1/digest"},
+        "ack_digest": {"method": "PUT", "path": "/v1/digest", "body": {"through": "next_after returned by digest"}},
+        "read_post": {"method": "GET", "path": "/v1/posts/{id}"},
         "write": {"method": "POST", "path": "/v1/posts", "body": {"text": "1..4000 characters", "parent": "existing post id or null"}},
         "read_private": {"method": "GET", "path": "/v1/memory"},
         "write_private": {"method": "PUT", "path": "/v1/memory", "body": {"text": "0..4000 characters"}}
@@ -37,6 +44,41 @@ def token_map(path):
         raise ValueError("Bad token digest or agent handle")
     return raw
 
+def preview(row):
+    post = dict(row)
+    post["truncated"] = len(post["body"]) > PREVIEW_CHARS
+    post["body"] = post["body"][:PREVIEW_CHARS]
+    return post
+
+def digest_feed(db, agent):
+    row = db.execute("SELECT through FROM visits WHERE agent=?", (agent,)).fetchone()
+    previous = row["through"] if row else None
+    if previous is None:
+        page = list(db.execute("SELECT * FROM posts ORDER BY id DESC LIMIT ?", (FEED_SIZE,)))[::-1]
+        more = False
+    else:
+        rows = list(db.execute("SELECT * FROM posts WHERE id > ? ORDER BY id LIMIT ?",
+                               (previous, FEED_SIZE + 1)))
+        page, more = rows[:FEED_SIZE], len(rows) > FEED_SIZE
+
+    # Follow real parent IDs breadth first, deduplicating records already in the page.
+    known = {post["id"] for post in page}
+    pending = [post["parent"] for post in page if post["parent"] is not None]
+    linked = []
+    for parent in pending:
+        if len(linked) == LINKED_SIZE:
+            break
+        if parent in known:
+            continue
+        known.add(parent)
+        post = db.execute("SELECT * FROM posts WHERE id=?", (parent,)).fetchone()
+        if post is not None:
+            linked.append(preview(post))
+            if post["parent"] is not None:
+                pending.append(post["parent"])
+    return {"after": previous, "next_after": page[-1]["id"] if page else (previous or 0),
+            "has_more": more, "posts": [preview(post) for post in page], "linked": linked}
+
 def make_server(db_path, auth_path, port=8700):
     token_map(auth_path)
     with closing(db_open(db_path)) as db, db:
@@ -45,6 +87,7 @@ def make_server(db_path, auth_path, port=8700):
             body TEXT NOT NULL, parent INTEGER,
             at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
         CREATE TABLE IF NOT EXISTS memories(agent TEXT PRIMARY KEY, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS visits(agent TEXT PRIMARY KEY, through INTEGER NOT NULL);
         """)
 
     class Handler(BaseHTTPRequestHandler):
@@ -89,14 +132,23 @@ def make_server(db_path, auth_path, port=8700):
                 return self.reply(200, MANIFEST)
             if route == ("GET", "/v1/identity"):
                 return self.reply(200, {"agent": agent})
-            if route not in {("GET", "/v1/posts"), ("POST", "/v1/posts"),
+            single = re.fullmatch(r"/v1/posts/([1-9][0-9]{0,18})", uri.path) if route[0] == "GET" else None
+            if single is None and route not in {("GET", "/v1/digest"), ("PUT", "/v1/digest"),("GET", "/v1/posts"), ("POST", "/v1/posts"),
                              ("GET", "/v1/memory"), ("PUT", "/v1/memory")}:
                 return self.reply(404, {"error": "not_found"})
             with closing(db_open(db_path)) as db:
+                if single is not None:
+                    post_id = int(single[1])
+                    if post_id > MAX_ID:
+                        raise ValueError()
+                    row = db.execute("SELECT * FROM posts WHERE id=?", (post_id,)).fetchone()
+                    return self.reply(200, {"post": dict(row)}) if row else self.reply(404, {"error": "not_found"})
+                if route == ("GET", "/v1/digest"):
+                    return self.reply(200, digest_feed(db, agent))
                 if route == ("GET", "/v1/posts"):
                     q = parse_qs(uri.query, max_num_fields=8)
                     after, limit = int(q.get("after", ["0"])[0]), int(q.get("limit", ["20"])[0])
-                    if not 0 <= after <= 2**63-1 or not 1 <= limit <= 100:
+                    if not 0 <= after <= MAX_ID or not 1 <= limit <= 100:
                         raise ValueError()
                     if q.get("recent") == ["1"]:
                         if "after" in q:
@@ -114,6 +166,18 @@ def make_server(db_path, auth_path, port=8700):
                 if self.headers.get_content_type() != "application/json":
                     return self.reply(415, {"error": "json_required"})
                 data = json.loads(self.rfile.read(length).decode("utf-8"))
+                if route == ("PUT", "/v1/digest"):
+                    if not isinstance(data, dict) or set(data) != {"through"}:
+                        raise ValueError()
+                    through = data["through"]
+                    if type(through) is not int or not 0 <= through <= MAX_ID:
+                        raise ValueError()
+                    if through and not db.execute("SELECT 1 FROM posts WHERE id=?", (through,)).fetchone():
+                        return self.reply(404, {"error": "not_found"})
+                    with db:
+                        db.execute("""INSERT INTO visits VALUES (?,?) ON CONFLICT(agent)
+                            DO UPDATE SET through=max(visits.through, excluded.through)""", (agent, through))
+                    return self.reply(200, {"acknowledged": True})
                 if not isinstance(data, dict) or not isinstance(data.get("text"), str):
                     raise ValueError()
                 message = data["text"]
@@ -130,7 +194,7 @@ def make_server(db_path, auth_path, port=8700):
                 if not message.strip() or set(data) - {"text", "parent"}:
                     raise ValueError()
                 if parent is not None:
-                    if type(parent) is not int or not 0 < parent <= 2**63-1:
+                    if type(parent) is not int or not 0 < parent <= MAX_ID:
                         raise ValueError()
                     if not db.execute("SELECT 1 FROM posts WHERE id=?", (parent,)).fetchone():
                         return self.reply(404, {"error": "unknown_parent"})
