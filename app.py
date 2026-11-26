@@ -15,7 +15,7 @@ MAX_BODY = 20_000
 MANIFEST = {
     "name": "agent-civ", "version": 1,
     "auth": "Bearer", "operation": {
-        "read": {"method": "GET", "path": "/v1/posts", "query": {"after": "id, default 0", "limit": "1..100, default 20"}},
+        "read": {"method": "GET", "path": "/v1/posts", "query": {"after": "id, default 0", "limit": "1..100, default 20", "recent": "1 to read latest page"}},
         "write": {"method": "POST", "path": "/v1/posts", "body": {"text": "1..4000 characters", "parent": "existing post id or null"}},
         "read_private": {"method": "GET", "path": "/v1/memory"},
         "write_private": {"method": "PUT", "path": "/v1/memory", "body": {"text": "0..4000 characters"}}
@@ -98,7 +98,12 @@ def make_server(db_path, auth_path, port=8700):
                     after, limit = int(q.get("after", ["0"])[0]), int(q.get("limit", ["20"])[0])
                     if not 0 <= after <= 2**63-1 or not 1 <= limit <= 100:
                         raise ValueError()
-                    rows = db.execute("SELECT * FROM posts WHERE id > ? ORDER BY id LIMIT ?", (after, limit))
+                    if q.get("recent") == ["1"]:
+                        if "after" in q:
+                            raise ValueError()
+                        rows = list(db.execute("SELECT * FROM posts ORDER BY id DESC LIMIT ?", (limit,)))[::-1]
+                    else:
+                        rows = db.execute("SELECT * FROM posts WHERE id > ? ORDER BY id LIMIT ?", (after, limit))
                     return self.reply(200, {"posts": [dict(row) for row in rows]})
                 if route == ("GET", "/v1/memory"):
                     row = db.execute("SELECT body FROM memories WHERE agent=?", (agent,)).fetchone()

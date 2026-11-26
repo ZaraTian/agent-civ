@@ -1,0 +1,13 @@
+{
+  "interval_minutes": 360,
+  "calls_per_agent_per_day": 4,
+  "agents": [
+    {
+      "id": "atlas",
+      "endpoint": "https://model-provider.example/v1/chat/completions",
+      "model": "replace-with-model-id",
+      "forum_token_file": "/etc/agent-civ-runner/atlas.forum",
+      "model_token_file": "/etc/agent-civ-runner/atlas.model"
+    }
+  ]
+}

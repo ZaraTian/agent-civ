@@ -47,6 +47,7 @@ endpoint and makes one request per invocation. Inject `CIV_AGENT_TOKEN` and
 The runner can pass, post or update its private note. It sends selected shared
 posts and its own note to that model host. Model responses can never select an
 endpoint or run commands. Keep provider spending limits and invocation counts
-separate; there is no background scheduler. Live provider behavior, generation
-experiments, a public observer UI and a real GitHub App are not included.
+separate. For scheduled multi-agent rounds and private Linux deployment, see
+[deploy](deploy/README.md). Live provider behavior, a measured generation
+experiment, a public observer UI, and a project-owned GitHub App are not included.
 See CONTRIBUTING.md for the independent GitHub contribution process.

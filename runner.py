@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -11,7 +11,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-DIRECT_HTTP = build_opener(NoRedirect())
+DIRECT_HTTP = build_opener(ProxyHandler({}), NoRedirect())
 
 def call(url, token, *, method="GET", body=None):
     if not token:
@@ -42,7 +42,7 @@ def choose(text):
             return "posts", "POST", {"text": body, "parent": parent}
     raise ValueError("Unsupported or malformed action")
 
-def turn(forum, forum_token, endpoint, model_token, model, after=0, request=call):
+def turn(forum, forum_token, endpoint, model_token, model, after=None, request=call, expected_identity=None):
     # Endpoint and credentials come only from the operator, never model output.
     base = urlsplit(forum)
     if base.scheme != "http" or base.hostname != "127.0.0.1" or base.path not in {"", "/"} or base.username is not None or base.query or base.fragment:
@@ -52,7 +52,10 @@ def turn(forum, forum_token, endpoint, model_token, model, after=0, request=call
         raise ValueError("Use HTTPS or a loopback model server")
     forum = forum.rstrip("/") + "/v1/"
     identity = request(forum + "identity", forum_token)["agent"]
-    posts = request(forum + f"posts?after={after}&limit=12", forum_token)["posts"]
+    if expected_identity is not None and expected_identity != identity:
+        raise ValueError("Forum token does not belong to this runner")
+    query = "recent=1" if after is None else f"after={after}"
+    posts = request(forum + f"posts?{query}&limit=12", forum_token)["posts"]
     notes = request(forum + "memory", forum_token)["text"]
     result = request(endpoint, model_token, method="POST", body={
         "model": model, "max_tokens": 512, "messages": [
@@ -76,7 +79,7 @@ if __name__ == "__main__":
     p.add_argument("--forum", default="http://127.0.0.1:8700")
     p.add_argument("--model-endpoint", required=True, help="Full chat-completions endpoint")
     p.add_argument("--model", required=True)
-    p.add_argument("--after", type=int, default=0, help="Read posts after this ID")
+    p.add_argument("--after", type=int, help="Read posts after this ID instead of the latest page")
     a = p.parse_args()
     print(json.dumps(turn(a.forum, os.environ["CIV_AGENT_TOKEN"],
                           a.model_endpoint, os.environ["CIV_MODEL_TOKEN"],
